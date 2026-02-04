@@ -1,5 +1,0 @@
-{
-  "name": "DNCR Checker With API",
-  "description": "A professional compliance tool integrated with Etisalat DNCR registry to verify phone numbers before dialing.",
-  "requestFramePermissions": []
-}
