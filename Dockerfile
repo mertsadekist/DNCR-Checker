@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY package*.json ./
+COPY server/prisma/schema.prisma server/prisma/schema.prisma
 RUN npm ci
 
 # Copy source code

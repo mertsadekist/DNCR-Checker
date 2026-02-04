@@ -11,8 +11,7 @@
     "preview": "vite preview",
     "start": "node --import tsx server/index.ts",
     "seed": "tsx server/seed.ts",
-    "db:push": "npx prisma db push --schema=server/prisma/schema.prisma",
-    "postinstall": "prisma generate --schema=server/prisma/schema.prisma"
+    "db:push": "npx prisma db push --schema=server/prisma/schema.prisma"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
