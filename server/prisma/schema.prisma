@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum CheckStatus {
+  ALLOWED
+  BLOCKED
+  ERROR
+}
+
+model User {
+  id        String     @id @default(uuid())
+  name      String
+  email     String     @unique
+  password  String
+  role      Role       @default(EMPLOYEE)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  checkLogs CheckLog[]
+
+  @@map("users")
+}
+
+model CheckLog {
+  id            String      @id @default(uuid())
+  phoneNumber   String
+  status        CheckStatus
+  dncrStatus    String?
+  transactionId String?
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+  createdAt     DateTime    @default(now())
+  apiLogs       ApiLog[]
+
+  @@map("check_logs")
+}
+
+model ApiLog {
+  id              String   @id @default(uuid())
+  checkLogId      String
+  checkLog        CheckLog @relation(fields: [checkLogId], references: [id])
+  requestUrl      String   @db.Text
+  requestMethod   String
+  requestHeaders  Json
+  requestBody     Json?
+  responseStatus  Int
+  responseBody    Json?
+  createdAt       DateTime @default(now())
+
+  @@map("api_logs")
+}

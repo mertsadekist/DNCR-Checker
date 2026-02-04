@@ -1,0 +1,329 @@
+openapi: 3.0.3
+
+info:
+  version: "1.0.0"
+  title: "DNCR Check & Token API"
+  description: |
+    This API specification provides two main capabilities:
+
+    **1. Do Not Call Registry (DNCR) Check API**
+    - The DNCR API allows organizations to check whether customer phone numbers (account numbers) are registered in the UAE Do Not Call Registry.
+    - The registry, effective since September 2022, aims to protect users from unsolicited marketing calls and spam.
+    - As per regulations updated in August 2023, telemarketers are strictly prohibited from contacting DNCR-registered numbers even with prior consent.
+    - Non-compliance can result in revocation of telecom services and further legal escalation.
+
+    **2. OAuth2 Token API**
+    - The token endpoint allows clients to obtain an access token using the client credentials grant type.
+    - This token is required to authenticate requests made to the DNCR check endpoint and other protected APIs.
+    - Token parameters include grant type (`client_credentials`) and scope (`apioauth`).
+
+    **Usage Overview**
+    - Clients must first call the token endpoint to retrieve a valid access token.
+    - Then, they may use this token as a bearer credential in the `Authorization` header when calling the DNCR check API.
+
+servers:
+  - url: https://apihub.etisalat.ae:9443
+
+components:
+  securitySchemes:
+    Authorization:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "Bearer <access_token>"
+
+  schemas:
+    # --- DNCR Schemas ---
+    DNCRCheckRequest:
+      type: object
+      required:
+        - accountNumber
+        - count
+      properties:
+        accountNumber:
+          type: array
+          items:
+            type: string
+          description: List of phone numbers (account numbers) to check
+        count:
+          type: string
+          description: Total number of account numbers in the request
+      example:
+        accountNumber: ["0509002528", "0551234567"]
+        count: "2"
+
+    DNCRCheck200Response:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: "5427ce08-71f6-4a4f-8037-01d5949e6bff"
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              accountNumber:
+                type: string
+                example: "0500000000"
+              dncrStatus:
+                type: string
+                example: "TRUE"
+              transactionStatus:
+                type: string
+                nullable: true
+                example: null
+        ackMessage:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "SUCCESS"
+
+    DNCRCheck400Response:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: "5427ce08-71f6-4a4f-8037-01d5949e6bff"
+        ackMessage:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "FAILURE"
+            errorCode:
+              type: string
+              example: "TIB-002"
+            errorType:
+              type: string
+              example: "Businsess"
+            errorMessage:
+              type: string
+              example: "Invalid Request : accountNumber is missing in the  Request."
+
+    DNCRCheck401Response:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 401
+        code:
+          type: string
+          example: "UNAUTHENTICATED"
+        message:
+          type: string
+          example: "Request not authenticated due to missing, invalid, or expired credentials"
+
+    DNCRCheck500Response:
+      type: object
+      properties:
+        transactionId:
+          type: string
+          example: "5427ce08-71f6-4a4f-8037-01d5949e6bff"
+        ackMessage:
+          type: object
+          properties:
+            status:
+              type: string
+              example: "FAILURE"
+            errorCode:
+              type: string
+              example: "TIB-999"
+            errorType:
+              type: string
+              example: "Technical"
+            errorMessage:
+              type: string
+              example: "Internal Server Error"
+
+    # --- Token Schemas ---
+    TokenRequest:
+      type: object
+      required:
+        - grant_type
+        - scope
+        - client_id
+        - client_secret
+      properties:
+        grant_type:
+          type: string
+          example: client_credentials
+        scope:
+          type: string
+          example: apioauth
+        client_id:
+          type: string
+          example: my-client-id
+        client_secret:
+          type: string
+          example: my-client-secret
+
+    Token200Response:
+      type: object
+      properties:
+        token_type:
+          type: string
+          example: "Bearer"
+        access_token:
+          type: string
+          example: "Pi9DjPcxXwSk5azvLqeJtmWATRd8"
+        scope:
+          type: string
+          example: "apioauth"
+        expires_in:
+          type: integer
+          example: 3599
+        consented_on:
+          type: integer
+          example: 1747292927
+
+    Token400Response:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 400
+        code:
+          type: string
+          example: "INVALID_ARGUMENT"
+        message:
+          type: string
+          example: "Client specified an invalid argument, request body or query param"
+
+    Token401Response:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 401
+        code:
+          type: string
+          example: "UNAUTHENTICATED"
+        message:
+          type: string
+          example: "Request not authenticated due to missing, invalid, or expired credentials"
+
+    Token500Response:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 500
+        code:
+          type: string
+          example: "INTERNAL"
+        message:
+          type: string
+          example: "Server error"
+
+paths:
+  /etisalat/serviceapis/dncr/v0/check:
+    post:
+      summary: /dncr/v0/check
+      description: Checks if the provided account numbers are registered in the UAE Do Not Call Registry.
+      security:
+        - Authorization: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DNCRCheckRequest"
+      parameters:
+        - in: header
+          name: clientID
+          required: true
+          schema:
+            type: string
+          description: Client identifier for authentication
+        - in: header
+          name: X-TIB-TransactionID
+          required: true
+          schema:
+            type: string
+            example: "87565467"
+          description: Unique transaction ID used for tracking
+        - in: header
+          name: X-TIB-RequestedSystem
+          required: true
+          schema:
+            type: string
+            example: "Motive"
+          description: System initiating the request
+      responses:
+        '200':
+          description: DNCR check processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNCRCheck200Response"
+        '400':
+          description: Bad Request – Invalid input parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNCRCheck400Response"
+        '401':
+          description: Unauthorized – Invalid or missing API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNCRCheck401Response"
+        '500':
+          description: Internal Server Error – Unexpected server-side issue
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNCRCheck500Response"
+
+  /etisalat/serviceapis/confidential/oauth2/token:
+    post:
+      summary: /oauth2/token
+      description: Retrieves an access token using client credentials grant type.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/TokenRequest"
+      parameters:
+        - name: X-TIB-TransactionID
+          in: header
+          required: true
+          schema:
+            type: string
+            example: "7748845768375"
+          description: Unique transaction ID used for tracing the token request
+        - name: X-TIB-RequestedSystem
+          in: header
+          required: true
+          schema:
+            type: string
+            example: "ELGRCR"
+          description: System requesting the access token
+      responses:
+        '200':
+          description: Token retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token200Response"
+        '400':
+          description: Bad Request – Invalid or missing parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token400Response"
+        '401':
+          description: Unauthorized – Invalid or missing credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token401Response"
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Token500Response"
