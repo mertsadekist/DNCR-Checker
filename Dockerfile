@@ -2,10 +2,10 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (including devDependencies for build)
 COPY package*.json ./
 COPY server/prisma/schema.prisma server/prisma/schema.prisma
-RUN npm ci
+RUN npm ci --include=dev
 
 # Copy source code
 COPY . .
