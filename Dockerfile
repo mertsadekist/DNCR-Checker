@@ -22,5 +22,5 @@ RUN npm run build
 # Expose port
 EXPOSE 4000
 
-# Start server
-CMD ["npm", "run", "start"]
+# Start server with database setup
+CMD sh -c "npx prisma db push --schema=server/prisma/schema.prisma --skip-generate && npm run seed; npm run start"
