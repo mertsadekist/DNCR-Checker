@@ -1,7 +1,7 @@
 FROM node:20-slim
 
-# Install OpenSSL for Prisma
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Install OpenSSL for Prisma, and curl for the container healthcheck
+RUN apt-get update -y && apt-get install -y openssl curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -23,4 +23,4 @@ RUN npm run build
 EXPOSE 4000
 
 # Start server with database setup
-CMD sh -c "npx prisma db push --schema=server/prisma/schema.prisma --skip-generate && npm run seed; npm run start"
+CMD ["sh", "-c", "npx prisma db push --schema=server/prisma/schema.prisma --skip-generate && npm run seed; exec node --import tsx server/index.ts"]

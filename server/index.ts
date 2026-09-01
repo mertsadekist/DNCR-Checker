@@ -37,6 +37,17 @@ app.get('/{*splat}', (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+// Node runs as PID 1 in the container, where signals with a default
+// disposition are ignored - handle them explicitly so `docker stop`
+// shuts the server down instead of waiting out its timeout.
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    console.log(`${signal} received, shutting down.`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(1), 10000).unref();
+  });
+}
