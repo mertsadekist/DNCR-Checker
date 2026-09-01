@@ -34,8 +34,6 @@ const JsonBlock: React.FC<{ data: any, title: string, status?: number, statusTex
 
 
 const TransactionModal: React.FC<TransactionModalProps> = ({ record, onClose }) => {
-  if (!record.apiTransactions || record.apiTransactions.length === 0) return null;
-
   return (
     <div 
       className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4 animate-fade-in"
@@ -66,7 +64,12 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ record, onClose }) 
 
         {/* Content */}
         <div className="p-6 space-y-6 overflow-y-auto">
-          {record.apiTransactions.map((tx, index) => (
+          {(!record.apiTransactions || record.apiTransactions.length === 0) && (
+            <p className="text-center text-gray-500 py-8">
+              No API transactions were recorded for this check.
+            </p>
+          )}
+          {(record.apiTransactions || []).map((tx, index) => (
             <div key={index} className="space-y-4 border-b border-gray-200 pb-6 last:pb-0 last:border-b-0">
                <div>
                  <h4 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">

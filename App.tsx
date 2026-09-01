@@ -81,7 +81,7 @@ const App: React.FC = () => {
       case 'dashboard':
         return <Dashboard history={history} onCheckComplete={handleCheckComplete} userName={user.name} />;
       case 'logs':
-        return <CallLogs history={history} userRole={user.role} />;
+        return <CallLogs userRole={user.role} />;
       case 'api_logs':
         return user.role === 'ADMIN' ? <ApiLogs /> : null;
       case 'settings':
