@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
+import { normalizeUaeNumber, evaluateDncrResponse } from '../dncrLogic';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -34,14 +35,15 @@ async function getAccessToken(): Promise<{ token: string; transaction: any }> {
   };
 
   const response = await fetch(url, { method: 'POST', headers, body: params });
-  const body = await response.json();
+  const body = await response.json().catch(() => ({} as any));
 
   const transaction = {
     request: { url, method: 'POST', headers, body: { grant_type: 'client_credentials', scope: 'apioauth', client_id: CLIENT_ID, client_secret: '********' } },
     response: { status: response.status, statusText: response.statusText, body },
   };
 
-  if (!response.ok) throw new Error(`OAuth Error: ${response.statusText}`);
+  if (!response.ok) throw new Error(`OAuth error: HTTP ${response.status} ${response.statusText}`);
+  if (!body.access_token) throw new Error('OAuth error: response contained no access_token');
 
   cachedToken = body.access_token;
   tokenExpiry = Date.now() + ((body.expires_in || 3600) * 1000) - 60000;
@@ -54,74 +56,10 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
   const { phoneNumber } = req.body;
   if (!phoneNumber) return res.status(400).json({ message: 'Phone number is required' });
 
-  const cleanPhone = phoneNumber.replace(/\D/g, '');
   const transactions: any[] = [];
 
-  try {
-    const { token, transaction: tokenTx } = await getAccessToken();
-    transactions.push(tokenTx);
-
-    const url = `${ETISALAT_BASE}/dncr/v0/check`;
-    const transactionId = `TID_${Date.now()}`;
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'X-TIB-RequestedSystem': REQUESTED_SYSTEM,
-      'X-TIB-TransactionID': transactionId,
-      'clientID': CLIENT_ID,
-    };
-    const requestBody = { accountNumber: [cleanPhone], count: '1' };
-
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(requestBody) });
-    const responseBody = await response.json().catch(() => ({ error: 'Failed to parse JSON' }));
-
-    const checkTx = {
-      request: { url, method: 'POST', headers: { ...headers, Authorization: `Bearer ${token.substring(0, 8)}...` }, body: requestBody },
-      response: { status: response.status, statusText: response.statusText, body: responseBody },
-    };
-    transactions.push(checkTx);
-
-    if (!response.ok) {
-      if (response.status === 401) { cachedToken = null; }
-      throw new Error(`DNCR API Error: ${response.statusText}`);
-    }
-
-    const details = responseBody.details && responseBody.details[0];
-    const isBlocked = details ? details.dncrStatus === 'TRUE' : false;
-    const status = isBlocked ? 'BLOCKED' : 'ALLOWED';
-
-    // Save to database
-    const checkLog = await prisma.checkLog.create({
-      data: {
-        phoneNumber,
-        status,
-        dncrStatus: details?.dncrStatus || null,
-        transactionId: responseBody.transactionId || transactionId,
-        userId: req.user!.id,
-        apiLogs: {
-          create: transactions.filter(t => !t.cached).map(t => ({
-            requestUrl: t.request.url,
-            requestMethod: t.request.method,
-            requestHeaders: t.request.headers,
-            requestBody: t.request.body || null,
-            responseStatus: t.response.status,
-            responseBody: t.response.body || null,
-          })),
-        },
-      },
-    });
-
-    res.json({
-      dncrResponse: {
-        phoneNumber,
-        isDncrListed: isBlocked,
-        blockReason: isBlocked ? 'Registered in DNCR' : undefined,
-        requestId: checkLog.id,
-      },
-      apiTransactions: transactions,
-    });
-  } catch (error: any) {
-    // Save error to database
+  // Fail closed: an unverified number is never reported as callable.
+  const failed = async (httpStatus: number, message: string) => {
     try {
       await prisma.checkLog.create({
         data: {
@@ -142,17 +80,99 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
           },
         },
       });
-    } catch {}
+    } catch (e) {
+      console.error('Failed to persist errored DNCR check:', e);
+    }
 
-    res.json({
+    return res.status(httpStatus).json({
       dncrResponse: {
         phoneNumber,
-        isDncrListed: false,
-        blockReason: error.message,
+        status: 'ERROR',
+        error: message,
         requestId: `err_${Date.now()}`,
       },
       apiTransactions: transactions,
     });
+  };
+
+  const cleanPhone = normalizeUaeNumber(phoneNumber);
+  if (!cleanPhone) {
+    return failed(400, `"${phoneNumber}" is not a valid UAE number, so it could not be checked.`);
+  }
+
+  try {
+    const { token, transaction: tokenTx } = await getAccessToken();
+    transactions.push(tokenTx);
+
+    const url = `${ETISALAT_BASE}/dncr/v0/check`;
+    const transactionId = `TID_${Date.now()}`;
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'X-TIB-RequestedSystem': REQUESTED_SYSTEM,
+      'X-TIB-TransactionID': transactionId,
+      'clientID': CLIENT_ID,
+    };
+    const requestBody = { accountNumber: [cleanPhone], count: '1' };
+
+    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(requestBody) });
+    const responseBody = await response.json().catch(() => ({ error: 'Failed to parse JSON' } as any));
+
+    transactions.push({
+      request: { url, method: 'POST', headers: { ...headers, Authorization: `Bearer ${token.substring(0, 8)}...` }, body: requestBody },
+      response: { status: response.status, statusText: response.statusText, body: responseBody },
+    });
+
+    if (response.status === 401) cachedToken = null;
+
+    const outcome = evaluateDncrResponse({
+      ok: response.ok,
+      httpStatus: response.status,
+      statusText: response.statusText,
+      body: responseBody,
+      requestedNumber: cleanPhone,
+    });
+
+    if (outcome.status === 'ERROR') {
+      return failed(502, outcome.error);
+    }
+
+    const isBlocked = outcome.status === 'BLOCKED';
+    const status = outcome.status;
+
+    const checkLog = await prisma.checkLog.create({
+      data: {
+        phoneNumber,
+        status,
+        dncrStatus: outcome.dncrStatus,
+        transactionId: responseBody.transactionId || transactionId,
+        userId: req.user!.id,
+        apiLogs: {
+          create: transactions.filter(t => !t.cached).map(t => ({
+            requestUrl: t.request.url,
+            requestMethod: t.request.method,
+            requestHeaders: t.request.headers,
+            requestBody: t.request.body || null,
+            responseStatus: t.response.status,
+            responseBody: t.response.body || null,
+          })),
+        },
+      },
+    });
+
+    res.json({
+      dncrResponse: {
+        phoneNumber,
+        status,
+        isDncrListed: isBlocked,
+        blockReason: isBlocked ? 'Registered in DNCR' : undefined,
+        requestId: checkLog.id,
+      },
+      apiTransactions: transactions,
+    });
+  } catch (error: any) {
+    console.error('DNCR check failed:', error?.message || error);
+    return failed(502, error?.message || 'The DNCR check could not be completed.');
   }
 });
 
@@ -214,12 +234,20 @@ router.post('/diagnostics', authenticateToken, async (_req, res) => {
     };
     const r = await fetch(`${ETISALAT_BASE}/dncr/v0/check`, {
       method: 'POST', headers,
-      body: JSON.stringify({ accountNumber: ['0000000000'], count: '1' }),
+      body: JSON.stringify({ accountNumber: ['0500000000'], count: '1' }),
     });
-    const body = await r.json().catch(() => ({}));
-    results.dncrCheck = { status: 'success', details: `DNCR endpoint responded. HTTP ${r.status}.` };
+    const body = await r.json().catch(() => ({} as any));
     results.raw.dncrCheckResponse = { status: r.status, body };
-    results.finalStatus = 'success';
+
+    // An HTTP error from the endpoint is a failed diagnostic, not a pass.
+    if (r.ok) {
+      results.dncrCheck = { status: 'success', details: `DNCR endpoint responded. HTTP ${r.status}.` };
+      results.finalStatus = 'success';
+    } else {
+      const upstream = body?.ackMessage?.errorMessage || body?.message || r.statusText;
+      results.dncrCheck = { status: 'failure', details: `DNCR endpoint returned HTTP ${r.status}: ${upstream}` };
+      results.finalStatus = 'failure';
+    }
   } catch (e: any) {
     results.dncrCheck = { status: 'failure', details: `Failed: ${e.message}` };
     results.finalStatus = 'failure';

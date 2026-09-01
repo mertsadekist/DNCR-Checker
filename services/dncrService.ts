@@ -16,7 +16,21 @@ export const checkNumberAgainstDncr = async (phoneNumber: string): Promise<DncrC
     body: JSON.stringify({ phoneNumber }),
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => null);
+
+  // A non-2xx reply, or one we cannot parse, is an unverified number.
+  if (!data?.dncrResponse) {
+    return {
+      dncrResponse: {
+        phoneNumber,
+        status: 'ERROR',
+        error: data?.message || `The server returned HTTP ${res.status}.`,
+        requestId: `err_${Date.now()}`,
+      },
+      apiTransactions: data?.apiTransactions || [],
+    };
+  }
+
   return {
     dncrResponse: data.dncrResponse,
     apiTransactions: data.apiTransactions || [],

@@ -8,9 +8,16 @@ export enum CheckStatus {
 
 export interface DncrResponse {
   phoneNumber: string;
-  isDncrListed: boolean;
+  /**
+   * The authoritative outcome. ERROR means the number could NOT be verified -
+   * it must never be presented as safe to call.
+   */
+  status: 'ALLOWED' | 'BLOCKED' | 'ERROR';
+  isDncrListed?: boolean;
   listingDate?: string; // ISO Date string
   blockReason?: string;
+  /** Why the check failed, when status is ERROR. */
+  error?: string;
   requestId: string;
 }
 

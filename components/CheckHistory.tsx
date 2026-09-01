@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckRecord, CheckStatus } from '../types';
-import { Clock, Phone, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Clock, Phone, ShieldCheck, ShieldAlert, AlertCircle } from 'lucide-react';
 
 interface CheckHistoryProps {
   history: CheckRecord[];
@@ -46,10 +46,15 @@ const CheckHistory: React.FC<CheckHistoryProps> = ({ history }) => {
                       <ShieldCheck className="w-3 h-3" />
                       Allowed
                     </span>
-                  ) : (
+                  ) : record.status === CheckStatus.BLOCKED ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
                       <ShieldAlert className="w-3 h-3" />
                       Blocked
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                      <AlertCircle className="w-3 h-3" />
+                      Not verified
                     </span>
                   )}
                 </td>

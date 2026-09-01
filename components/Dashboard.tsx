@@ -71,11 +71,20 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
 
     try {
       const { dncrResponse, apiTransactions } = await checkNumberAgainstDncr(cleanNumber);
-      const newStatus = dncrResponse.isDncrListed ? CheckStatus.BLOCKED : CheckStatus.ALLOWED;
-      
+
+      const newStatus =
+        dncrResponse.status === 'BLOCKED' ? CheckStatus.BLOCKED :
+        dncrResponse.status === 'ALLOWED' ? CheckStatus.ALLOWED :
+        CheckStatus.ERROR;
+
       setStatus(newStatus);
 
-      // Add to global history
+      if (newStatus === CheckStatus.ERROR) {
+        setError(dncrResponse.error || 'The DNCR check could not be completed. See API Logs for details.');
+      }
+
+      // Add to global history - failed checks are recorded too, so an
+      // unverified number leaves a trace instead of quietly disappearing.
       const newRecord: CheckRecord = {
         id: dncrResponse.requestId,
         phoneNumber: phoneNumber, // formatted
@@ -84,13 +93,21 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
         agentName: userName || 'Unknown',
         apiTransactions: apiTransactions // Pass the transaction details
       };
-      
+
       onCheckComplete(newRecord);
-      
-    } catch (err) {
+
+    } catch (err: any) {
       console.error(err);
       setStatus(CheckStatus.ERROR);
-      setError("Failed to connect to Etisalat DNCR API. See API Logs for details.");
+      setError('Could not reach the DNCR service. The number is NOT verified - do not call it.');
+
+      onCheckComplete({
+        id: `err_${Date.now()}`,
+        phoneNumber: phoneNumber,
+        status: CheckStatus.ERROR,
+        timestamp: new Date(),
+        agentName: userName || 'Unknown',
+      });
     }
   };
 

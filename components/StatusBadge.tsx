@@ -40,10 +40,18 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = '' }) => 
         </div>
       );
     case CheckStatus.ERROR:
+      // An unverified number carries the same operational risk as a listed
+      // one, so it gets the same weight on screen - never a quiet notice.
       return (
-        <div className={`flex items-center gap-2 text-amber-600 bg-amber-50 px-4 py-2 rounded-lg border border-amber-200 ${className}`}>
-          <AlertCircle className="w-5 h-5" />
-          <span className="font-medium">System Error: Could not verify status.</span>
+        <div className={`flex flex-col items-center justify-center text-center p-6 bg-amber-50 border-2 border-amber-500 rounded-xl ${className}`}>
+          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mb-3">
+            <AlertCircle className="w-10 h-10 text-amber-600" />
+          </div>
+          <h3 className="text-2xl font-bold text-amber-700">NOT VERIFIED</h3>
+          <p className="text-amber-700 mt-1">The DNCR status of this number is unknown.</p>
+          <p className="text-sm text-amber-800 mt-2 font-medium bg-amber-100 px-2 py-1 rounded">
+            Do not call. Retry the check, or escalate if it keeps failing.
+          </p>
         </div>
       );
     default:
