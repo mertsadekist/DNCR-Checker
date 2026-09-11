@@ -12,7 +12,7 @@
     "start": "node --import tsx server/index.ts",
     "seed": "tsx server/seed.ts",
     "db:push": "npx prisma db push --schema=server/prisma/schema.prisma",
-    "test:logic": "node --import tsx --test server/dncrLogic.test.ts"
+    "test:logic": "node --import tsx --test shared/dncrStatus.test.ts"
   },
   "dependencies": {
     "@google/genai": "^1.30.0",

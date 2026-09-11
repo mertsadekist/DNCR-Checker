@@ -13,9 +13,17 @@ enum Role {
 }
 
 enum CheckStatus {
+  // Legacy values. Kept so rows written before the DNCR rule update stay
+  // readable; nothing writes them any more.
   ALLOWED
   BLOCKED
   ERROR
+
+  // Current values, matching DncrFinalStatus in shared/dncrStatus.ts.
+  DNCR_REGISTERED
+  DNCR_NOT_REGISTERED
+  UNKNOWN
+  CHECK_FAILED
 }
 
 model User {
@@ -35,8 +43,18 @@ model User {
 model CheckLog {
   id            String      @id @default(uuid())
   phoneNumber   String
+  /// The interpreted outcome. See shared/dncrStatus.ts.
   status        CheckStatus
+  /// Raw dncrStatus exactly as the API sent it - null included. Never rewritten.
   dncrStatus    String?
+  /// Raw transactionStatus exactly as the API sent it. Never rewritten.
+  rawTransactionStatus String?
+  /// ALLOWED | NOT_ALLOWED, derived from status.
+  callPermission String?
+  /// Which rule produced the interpretation, so a result stays explainable.
+  appliedRule   String?
+  /// Human-readable reason, mainly for UNKNOWN and CHECK_FAILED rows.
+  reason        String?     @db.Text
   transactionId String?
   userId        String
   user          User        @relation(fields: [userId], references: [id])

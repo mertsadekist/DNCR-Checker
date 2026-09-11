@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Search, Phone, RotateCcw } from 'lucide-react';
-import { CheckStatus, CheckRecord, DncrResponse } from '../types';
+import { CheckStage, CheckRecord, DncrResponse } from '../types';
 import StatusBadge from './StatusBadge';
 import CheckHistory from './CheckHistory';
 import { checkNumberAgainstDncr } from '../services/dncrService';
@@ -13,7 +13,8 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userName }) => {
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [status, setStatus] = useState<CheckStatus>(CheckStatus.IDLE);
+  const [stage, setStage] = useState<CheckStage>(CheckStage.IDLE);
+  const [result, setResult] = useState<DncrResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Helper to format UAE numbers as user types
@@ -48,7 +49,8 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
 
   const handleReset = () => {
     setPhoneNumber('');
-    setStatus(CheckStatus.IDLE);
+    setStage(CheckStage.IDLE);
+    setResult(null);
     setError(null);
   };
 
@@ -67,44 +69,52 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
     }
 
     setError(null);
-    setStatus(CheckStatus.CHECKING);
+    setResult(null);
+    setStage(CheckStage.CHECKING);
 
     try {
       const { dncrResponse, apiTransactions } = await checkNumberAgainstDncr(cleanNumber);
 
-      const newStatus =
-        dncrResponse.status === 'BLOCKED' ? CheckStatus.BLOCKED :
-        dncrResponse.status === 'ALLOWED' ? CheckStatus.ALLOWED :
-        CheckStatus.ERROR;
+      setResult(dncrResponse);
+      setStage(CheckStage.DONE);
 
-      setStatus(newStatus);
-
-      if (newStatus === CheckStatus.ERROR) {
-        setError(dncrResponse.error || 'The DNCR check could not be completed. See API Logs for details.');
-      }
-
-      // Add to global history - failed checks are recorded too, so an
-      // unverified number leaves a trace instead of quietly disappearing.
-      const newRecord: CheckRecord = {
+      // Every outcome is recorded, so a number that could not be cleared
+      // leaves a trace instead of quietly disappearing.
+      onCheckComplete({
         id: dncrResponse.requestId,
         phoneNumber: phoneNumber, // formatted
-        status: newStatus,
+        finalStatus: dncrResponse.finalStatus,
+        callPermission: dncrResponse.callPermission,
+        displayLabel: dncrResponse.displayLabel,
+        reason: dncrResponse.reason,
         timestamp: new Date(),
         agentName: userName || 'Unknown',
-        apiTransactions: apiTransactions // Pass the transaction details
-      };
-
-      onCheckComplete(newRecord);
+        apiTransactions,
+      });
 
     } catch (err: any) {
       console.error(err);
-      setStatus(CheckStatus.ERROR);
-      setError('Could not reach the DNCR service. The number is NOT verified - do not call it.');
+      const failure: DncrResponse = {
+        phoneNumber,
+        finalStatus: 'CHECK_FAILED',
+        callPermission: 'NOT_ALLOWED',
+        displayLabel: 'DNCR Check Failed — Do Not Call',
+        reason: 'Could not reach the DNCR service, so the number was never checked.',
+        rawDncrStatus: null,
+        rawTransactionStatus: null,
+        appliedRule: 'TECHNICAL_FAILURE',
+        requestId: `err_${Date.now()}`,
+      };
+      setResult(failure);
+      setStage(CheckStage.DONE);
 
       onCheckComplete({
-        id: `err_${Date.now()}`,
-        phoneNumber: phoneNumber,
-        status: CheckStatus.ERROR,
+        id: failure.requestId,
+        phoneNumber,
+        finalStatus: failure.finalStatus,
+        callPermission: failure.callPermission,
+        displayLabel: failure.displayLabel,
+        reason: failure.reason,
         timestamp: new Date(),
         agentName: userName || 'Unknown',
       });
@@ -121,7 +131,7 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
             Private internal tool for verifying numbers against the DNCR registry to ensure compliance.
           </p>
         </div>
-        {status !== CheckStatus.IDLE && (
+        {stage !== CheckStage.IDLE && (
           <button 
             onClick={handleReset}
             className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-emerald-600 bg-white border border-gray-200 px-4 py-2 rounded-lg shadow-sm transition-colors"
@@ -152,23 +162,17 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(formatPhoneNumber(e.target.value))}
                 autoComplete="off"
-                disabled={status !== CheckStatus.IDLE && status !== CheckStatus.ERROR}
+                disabled={stage === CheckStage.CHECKING}
               />
 
-              {status === CheckStatus.IDLE || status === CheckStatus.ERROR || status === CheckStatus.CHECKING ? (
-                <button
-                  type="submit"
-                  disabled={status === CheckStatus.CHECKING}
-                  className="absolute right-2 top-2 bottom-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {status === CheckStatus.CHECKING ? 'Checking...' : 'Check Status'}
-                  {status === CheckStatus.IDLE && <Search className="w-4 h-4" />}
-                </button>
-              ) : (
-                 <div className="absolute right-4 top-4 text-emerald-600 font-medium flex items-center gap-2">
-                    <span className="text-sm bg-emerald-50 px-3 py-1 rounded-md border border-emerald-100">Verified</span>
-                 </div>
-              )}
+              <button
+                type="submit"
+                disabled={stage === CheckStage.CHECKING}
+                className="absolute right-2 top-2 bottom-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {stage === CheckStage.CHECKING ? 'Checking...' : 'Check Status'}
+                {stage === CheckStage.IDLE && <Search className="w-4 h-4" />}
+              </button>
             </div>
 
             {error && (
@@ -182,9 +186,9 @@ const Dashboard: React.FC<DashboardProps> = ({ history, onCheckComplete, userNam
         </div>
 
         {/* Status Display */}
-        {(status !== CheckStatus.IDLE) && (
+        {stage !== CheckStage.IDLE && (
           <div className="animate-fade-in-up">
-            <StatusBadge status={status} className="w-full shadow-sm" />
+            <StatusBadge stage={stage} result={result} className="w-full shadow-sm" />
           </div>
         )}
 

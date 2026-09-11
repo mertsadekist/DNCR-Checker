@@ -1,8 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { CheckRecord, CheckStatus, ApiTransaction } from '../types';
-import { Download, Search, Filter, PhoneCall, ShieldCheck, ShieldAlert, AlertCircle, FileJson, RefreshCw } from 'lucide-react';
+import { CheckRecord, ApiTransaction } from '../types';
+import { Download, Search, Filter, PhoneCall, AlertCircle, FileJson, RefreshCw } from 'lucide-react';
 import TransactionModal from './TransactionModal';
 import { getAuthHeaders } from '../services/authService';
+import { DncrFinalStatus, STATUS_PRESENTATION } from '../shared/dncrStatus';
+import { StatusPill } from './statusPresentation';
+
+/**
+ * Rows written before the DNCR rule update carry the old three-value status.
+ * Map them onto the current outcomes so history stays readable.
+ */
+const LEGACY_STATUS: Record<string, DncrFinalStatus> = {
+  ALLOWED: 'DNCR_NOT_REGISTERED',
+  BLOCKED: 'DNCR_REGISTERED',
+  ERROR: 'CHECK_FAILED',
+};
 
 interface CallLogsProps {
   userRole?: string;
@@ -12,8 +24,12 @@ interface CallLogsProps {
 interface DbCheckLog {
   id: string;
   phoneNumber: string;
-  status: 'ALLOWED' | 'BLOCKED' | 'ERROR';
+  status: string;
   dncrStatus: string | null;
+  rawTransactionStatus?: string | null;
+  callPermission?: string | null;
+  appliedRule?: string | null;
+  reason?: string | null;
   transactionId: string | null;
   createdAt: string;
   user?: { name?: string; email?: string };
@@ -29,13 +45,24 @@ interface DbApiLog {
   responseBody: any;
 }
 
-const toRecord = (row: DbCheckLog): CheckRecord => ({
-  id: row.id,
-  phoneNumber: row.phoneNumber,
-  status: CheckStatus[row.status] ?? CheckStatus.ERROR,
-  timestamp: new Date(row.createdAt),
-  agentName: row.user?.name || 'Unknown',
-});
+const toRecord = (row: DbCheckLog): CheckRecord => {
+  const finalStatus: DncrFinalStatus = (STATUS_PRESENTATION as any)[row.status]
+    ? (row.status as DncrFinalStatus)
+    : LEGACY_STATUS[row.status] ?? 'CHECK_FAILED';
+
+  return {
+    id: row.id,
+    phoneNumber: row.phoneNumber,
+    finalStatus,
+    callPermission:
+      (row.callPermission as CheckRecord['callPermission']) ??
+      (finalStatus === 'DNCR_NOT_REGISTERED' ? 'ALLOWED' : 'NOT_ALLOWED'),
+    displayLabel: STATUS_PRESENTATION[finalStatus].defaultLabel,
+    reason: row.reason ?? undefined,
+    timestamp: new Date(row.createdAt),
+    agentName: row.user?.name || 'Unknown',
+  };
+};
 
 const toTransaction = (row: DbApiLog): ApiTransaction => ({
   request: {
@@ -56,7 +83,7 @@ const CallLogs: React.FC<CallLogsProps> = ({ userRole }) => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ALLOWED' | 'BLOCKED' | 'ERROR'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | DncrFinalStatus>('ALL');
   const [selectedRecord, setSelectedRecord] = useState<CheckRecord | null>(null);
   const [loadingDetailsFor, setLoadingDetailsFor] = useState<string | null>(null);
 
@@ -95,19 +122,16 @@ const CallLogs: React.FC<CallLogsProps> = ({ userRole }) => {
 
   const filteredHistory = logs.filter(record => {
     const matchesSearch = record.phoneNumber.includes(searchTerm);
-    const matchesStatus =
-      statusFilter === 'ALL' ? true :
-      statusFilter === 'ALLOWED' ? record.status === CheckStatus.ALLOWED :
-      statusFilter === 'BLOCKED' ? record.status === CheckStatus.BLOCKED :
-      record.status === CheckStatus.ERROR;
+    const matchesStatus = statusFilter === 'ALL' || record.finalStatus === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
   const exportCSV = () => {
     const escape = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const headers = "ID,Timestamp,Phone Number,Status,Agent\n";
+    const headers = "ID,Timestamp,Phone Number,Final Status,Call Permission,Label,Agent\n";
     const rows = filteredHistory.map(r =>
-      [r.id, r.timestamp.toISOString(), r.phoneNumber, r.status, r.agentName].map(escape).join(',')
+      [r.id, r.timestamp.toISOString(), r.phoneNumber, r.finalStatus, r.callPermission, r.displayLabel, r.agentName]
+        .map(escape).join(',')
     ).join("\n");
     const blob = new Blob([headers + rows], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
@@ -182,9 +206,10 @@ const CallLogs: React.FC<CallLogsProps> = ({ userRole }) => {
                 className="bg-white border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-emerald-500 focus:border-emerald-500 block p-2"
               >
                 <option value="ALL">All Statuses</option>
-                <option value="ALLOWED">Allowed Only</option>
-                <option value="BLOCKED">Blocked Only</option>
-                <option value="ERROR">Not Verified Only</option>
+                <option value="DNCR_NOT_REGISTERED">Not Registered (Call Allowed)</option>
+                <option value="DNCR_REGISTERED">DNCR Registered (Do Not Call)</option>
+                <option value="UNKNOWN">Unknown (Do Not Call)</option>
+                <option value="CHECK_FAILED">Check Failed (Do Not Call)</option>
               </select>
             </div>
           </div>
@@ -211,6 +236,7 @@ const CallLogs: React.FC<CallLogsProps> = ({ userRole }) => {
                     <th className="px-6 py-4">Time</th>
                     <th className="px-6 py-4">Phone Number</th>
                     <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Call</th>
                     <th className="px-6 py-4">Agent</th>
                     {userRole === 'ADMIN' && <th className="px-6 py-4 text-center">Details</th>}
                   </tr>
@@ -227,23 +253,11 @@ const CallLogs: React.FC<CallLogsProps> = ({ userRole }) => {
                       <td className="px-6 py-4 font-mono font-medium text-gray-900">
                         {record.phoneNumber}
                       </td>
-                      <td className="px-6 py-4">
-                        {record.status === CheckStatus.ALLOWED ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                            <ShieldCheck className="w-3 h-3" />
-                            Allowed
-                          </span>
-                        ) : record.status === CheckStatus.BLOCKED ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                            <ShieldAlert className="w-3 h-3" />
-                            Blocked
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                            <AlertCircle className="w-3 h-3" />
-                            Not verified
-                          </span>
-                        )}
+                      <td className="px-6 py-4" title={record.reason || undefined}>
+                        <StatusPill status={record.finalStatus} />
+                      </td>
+                      <td className={`px-6 py-4 text-xs font-semibold ${record.callPermission === 'ALLOWED' ? 'text-green-700' : 'text-red-700'}`}>
+                        {record.callPermission === 'ALLOWED' ? 'Allowed' : 'Not allowed'}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2">

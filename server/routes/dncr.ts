@@ -1,7 +1,13 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { AuthRequest, authenticateToken } from '../middleware/auth';
-import { normalizeUaeNumber, evaluateDncrResponse } from '../dncrLogic';
+import {
+  DncrInterpretation,
+  interpretDncrResponse,
+  invalidInput,
+  normalizeUaeNumber,
+  technicalFailure,
+} from '../../shared/dncrStatus';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -58,15 +64,24 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
 
   const transactions: any[] = [];
 
-  // Fail closed: an unverified number is never reported as callable.
-  const failed = async (httpStatus: number, message: string) => {
+  /**
+   * Persists the interpreted result alongside the raw API values and replies.
+   * All outcomes go through here, so a check can never reach the client
+   * without also being recorded.
+   */
+  const respond = async (httpStatus: number, interpretation: DncrInterpretation, transactionId: string | null) => {
+    let requestId = `err_${Date.now()}`;
     try {
-      await prisma.checkLog.create({
+      const checkLog = await prisma.checkLog.create({
         data: {
           phoneNumber,
-          status: 'ERROR',
-          dncrStatus: null,
-          transactionId: null,
+          status: interpretation.finalStatus,
+          dncrStatus: interpretation.rawDncrStatus,
+          rawTransactionStatus: interpretation.rawTransactionStatus,
+          callPermission: interpretation.callPermission,
+          appliedRule: interpretation.appliedRule,
+          reason: interpretation.reason,
+          transactionId,
           userId: req.user!.id,
           apiLogs: {
             create: transactions.filter(t => !t.cached && t.request?.url).map(t => ({
@@ -80,24 +95,20 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
           },
         },
       });
+      requestId = checkLog.id;
     } catch (e) {
-      console.error('Failed to persist errored DNCR check:', e);
+      console.error('Failed to persist DNCR check:', e);
     }
 
     return res.status(httpStatus).json({
-      dncrResponse: {
-        phoneNumber,
-        status: 'ERROR',
-        error: message,
-        requestId: `err_${Date.now()}`,
-      },
+      dncrResponse: { phoneNumber, ...interpretation, requestId },
       apiTransactions: transactions,
     });
   };
 
   const cleanPhone = normalizeUaeNumber(phoneNumber);
   if (!cleanPhone) {
-    return failed(400, `"${phoneNumber}" is not a valid UAE number, so it could not be checked.`);
+    return respond(400, invalidInput('The number is not a valid UAE number, so it could not be checked.'), null);
   }
 
   try {
@@ -125,7 +136,7 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
 
     if (response.status === 401) cachedToken = null;
 
-    const outcome = evaluateDncrResponse({
+    const interpretation = interpretDncrResponse({
       ok: response.ok,
       httpStatus: response.status,
       statusText: response.statusText,
@@ -133,46 +144,13 @@ router.post('/check', authenticateToken, async (req: AuthRequest, res: Response)
       requestedNumber: cleanPhone,
     });
 
-    if (outcome.status === 'ERROR') {
-      return failed(502, outcome.error);
-    }
-
-    const isBlocked = outcome.status === 'BLOCKED';
-    const status = outcome.status;
-
-    const checkLog = await prisma.checkLog.create({
-      data: {
-        phoneNumber,
-        status,
-        dncrStatus: outcome.dncrStatus,
-        transactionId: responseBody.transactionId || transactionId,
-        userId: req.user!.id,
-        apiLogs: {
-          create: transactions.filter(t => !t.cached).map(t => ({
-            requestUrl: t.request.url,
-            requestMethod: t.request.method,
-            requestHeaders: t.request.headers,
-            requestBody: t.request.body || null,
-            responseStatus: t.response.status,
-            responseBody: t.response.body || null,
-          })),
-        },
-      },
-    });
-
-    res.json({
-      dncrResponse: {
-        phoneNumber,
-        status,
-        isDncrListed: isBlocked,
-        blockReason: isBlocked ? 'Registered in DNCR' : undefined,
-        requestId: checkLog.id,
-      },
-      apiTransactions: transactions,
-    });
+    // A technical failure is a bad gateway; an indeterminate but well-formed
+    // answer is a successful call that simply did not clear the number.
+    const httpStatus = interpretation.finalStatus === 'CHECK_FAILED' ? 502 : 200;
+    return respond(httpStatus, interpretation, responseBody?.transactionId || transactionId);
   } catch (error: any) {
     console.error('DNCR check failed:', error?.message || error);
-    return failed(502, error?.message || 'The DNCR check could not be completed.');
+    return respond(502, technicalFailure(error?.message || 'The DNCR check could not be completed.'), null);
   }
 });
 
@@ -223,7 +201,8 @@ router.post('/diagnostics', authenticateToken, async (_req, res) => {
     return res.json(results);
   }
 
-  // Stage 3
+  // Stage 3 - a reachability probe only. The placeholder account number is a
+  // structurally valid but unassigned pattern, never a customer number.
   try {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${cachedToken}`,
@@ -234,7 +213,7 @@ router.post('/diagnostics', authenticateToken, async (_req, res) => {
     };
     const r = await fetch(`${ETISALAT_BASE}/dncr/v0/check`, {
       method: 'POST', headers,
-      body: JSON.stringify({ accountNumber: ['0500000000'], count: '1' }),
+      body: JSON.stringify({ accountNumber: [`05${'0'.repeat(8)}`], count: '1' }),
     });
     const body = await r.json().catch(() => ({} as any));
     results.raw.dncrCheckResponse = { status: r.status, body };

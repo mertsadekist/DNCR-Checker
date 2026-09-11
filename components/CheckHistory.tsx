@@ -1,6 +1,7 @@
 import React from 'react';
-import { CheckRecord, CheckStatus } from '../types';
-import { Clock, Phone, ShieldCheck, ShieldAlert, AlertCircle } from 'lucide-react';
+import { CheckRecord } from '../types';
+import { Clock } from 'lucide-react';
+import { StatusPill } from './statusPresentation';
 
 interface CheckHistoryProps {
   history: CheckRecord[];
@@ -28,6 +29,7 @@ const CheckHistory: React.FC<CheckHistoryProps> = ({ history }) => {
               <th className="px-6 py-3">Time</th>
               <th className="px-6 py-3">Phone Number</th>
               <th className="px-6 py-3">Status</th>
+              <th className="px-6 py-3">Call</th>
               <th className="px-6 py-3">Agent</th>
             </tr>
           </thead>
@@ -41,22 +43,10 @@ const CheckHistory: React.FC<CheckHistoryProps> = ({ history }) => {
                   {record.phoneNumber}
                 </td>
                 <td className="px-6 py-4">
-                  {record.status === CheckStatus.ALLOWED ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      <ShieldCheck className="w-3 h-3" />
-                      Allowed
-                    </span>
-                  ) : record.status === CheckStatus.BLOCKED ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                      <ShieldAlert className="w-3 h-3" />
-                      Blocked
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                      <AlertCircle className="w-3 h-3" />
-                      Not verified
-                    </span>
-                  )}
+                  <StatusPill status={record.finalStatus} />
+                </td>
+                <td className={`px-6 py-4 text-xs font-semibold ${record.callPermission === 'ALLOWED' ? 'text-green-700' : 'text-red-700'}`}>
+                  {record.callPermission === 'ALLOWED' ? 'Allowed' : 'Not allowed'}
                 </td>
                 <td className="px-6 py-4">
                   {record.agentName}

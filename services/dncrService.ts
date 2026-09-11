@@ -18,13 +18,18 @@ export const checkNumberAgainstDncr = async (phoneNumber: string): Promise<DncrC
 
   const data = await res.json().catch(() => null);
 
-  // A non-2xx reply, or one we cannot parse, is an unverified number.
-  if (!data?.dncrResponse) {
+  // A reply we cannot read leaves the number unchecked, whatever the code.
+  if (!data?.dncrResponse?.finalStatus) {
     return {
       dncrResponse: {
         phoneNumber,
-        status: 'ERROR',
-        error: data?.message || `The server returned HTTP ${res.status}.`,
+        finalStatus: 'CHECK_FAILED',
+        callPermission: 'NOT_ALLOWED',
+        displayLabel: 'DNCR Check Failed — Do Not Call',
+        reason: data?.message || `The server returned HTTP ${res.status}.`,
+        rawDncrStatus: null,
+        rawTransactionStatus: null,
+        appliedRule: 'TECHNICAL_FAILURE',
         requestId: `err_${Date.now()}`,
       },
       apiTransactions: data?.apiTransactions || [],

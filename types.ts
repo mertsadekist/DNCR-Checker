@@ -1,23 +1,17 @@
-export enum CheckStatus {
+import type { CallPermission, DncrFinalStatus, DncrInterpretation } from './shared/dncrStatus';
+
+export type { CallPermission, DncrFinalStatus, DncrInterpretation };
+
+/** The dashboard's own view state, on top of the four DNCR outcomes. */
+export enum CheckStage {
   IDLE = 'IDLE',
   CHECKING = 'CHECKING',
-  ALLOWED = 'ALLOWED',
-  BLOCKED = 'BLOCKED',
-  ERROR = 'ERROR'
+  DONE = 'DONE',
 }
 
-export interface DncrResponse {
+/** What the backend returns for a single check. */
+export interface DncrResponse extends DncrInterpretation {
   phoneNumber: string;
-  /**
-   * The authoritative outcome. ERROR means the number could NOT be verified -
-   * it must never be presented as safe to call.
-   */
-  status: 'ALLOWED' | 'BLOCKED' | 'ERROR';
-  isDncrListed?: boolean;
-  listingDate?: string; // ISO Date string
-  blockReason?: string;
-  /** Why the check failed, when status is ERROR. */
-  error?: string;
   requestId: string;
 }
 
@@ -42,7 +36,10 @@ export interface ApiTransaction {
 export interface CheckRecord {
   id: string;
   phoneNumber: string;
-  status: CheckStatus;
+  finalStatus: DncrFinalStatus;
+  callPermission: CallPermission;
+  displayLabel: string;
+  reason?: string;
   timestamp: Date;
   agentName: string;
   apiTransactions?: ApiTransaction[];
@@ -56,7 +53,6 @@ export interface SalesScriptConfig {
   tone: string;
 }
 
-// FIX: Add Diagnostic types for ConnectionTester component
 export type DiagnosticStatus = 'pending' | 'success' | 'failure';
 
 export interface DiagnosticStep {
